@@ -1,2 +1,0 @@
---CALL plsfadm.SP_TABLE_STAT_ONE('TRAN_MSG_RECV_E619');
-dbms_stats.gather_table_stats(ownname => 'PLSFADM',tabname => 'TRAN_MSG_RECV_E619', cascade => TRUE,estimate_percent => 10);
