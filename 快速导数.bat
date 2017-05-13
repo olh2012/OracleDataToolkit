@@ -1,6 +1,12 @@
 ::脚本功能：Oracle快速数据导入与导出
 ::脚本编写：四方精创 欧林海
 ::版本历史：
+::          2017-04-08 Ver1.6
+::                       添加64位操作系统支持，添加是否启用鼠标操作的配置（仅32位系统有效）
+::                       将导入数据文件的格式限定为csv，txt
+::          2017-03-30 Ver1.5
+::                       解决配置未重置的问题
+::                       添加了数据库密码明文配置项dbPassword（原来仅支持密文配置项dbEncPassword）
 ::          2016-12-26 Ver1.4
 ::                       添加直接按照数据库表清单导出数据功能
 ::                       添加数据库端口配置项
@@ -18,9 +24,9 @@
 ::          2016-11-03 Ver1.0
 ::                       初始版本，能实现批量数据导出功能
 @echo off
-title Oracle快速导数工具 Ver1.4 —by 欧林海
 ::开启变量延迟
 setlocal EnableDelayedExpansion
+
 ::设置32位系统或64位系统执行标识
 if /i "%PROCESSOR_IDENTIFIER:~0,3%"=="x86" (
     set "WIN_BIT=Win32" 
@@ -29,6 +35,8 @@ if /i "%PROCESSOR_IDENTIFIER:~0,3%"=="x86" (
     set "WIN_BIT=Win64" 
     set "ONLY_X86=REM"
 )
+
+title Oracle快速导数工具 Ver1.6(%WIN_BIT%) —by 欧林海
 
 ::切换字符编码
 %ONLY_X64% chcp 936>nul
@@ -52,7 +60,6 @@ set DB_TEST_INFO=%LOG_DIR%\test_conn_info.log
 set path=%path%;%CUR_DIR%\%BIN_DIR%
 set TAB_LIST=%SQL_DIR%\table_list.txt
 set CHOICE_TIPS=请选择菜单
-%ONLY_X86% set CHOICE_TIPS=%CHOICE_TIPS%(支持鼠标点击)
 
 ::执行环境检查
 ::检查Oracle命令行工具是否可用
@@ -68,10 +75,15 @@ for %%a in ( sqluldr2.exe szboc_decrypt.exe head.exe choix.com ) do (
 for %%a in ( %SQL_DIR% %CTL_DIR% %DATA_DIR% %LOG_DIR% ) do if not exist %%a md %%a
 
 ::获取数据库配置选项
-type %DB_SETTING% | findstr "^dataSource">%DB_SETTING_TMP%
+type %DB_SETTING% | findstr "^dataSource ^mouseEnable">%DB_SETTING_TMP%
 for /f "delims= "  %%a in ( %DB_SETTING_TMP% ) do if "x%%a" neq "x" set "%%a"
 
 if not defined dataSource ( echo dataSource未配置 && goto configError )
+::鼠标操作设置,64位兼容模式不支持鼠标
+set "ONLY_KEYBOARD="
+set "SUPPORT_MOUSE=REM"
+%ONLY_X86% if /i "%mouseEnable%" == "true" ( set "ONLY_KEYBOARD=REM" && set "SUPPORT_MOUSE=" )
+%SUPPORT_MOUSE% set CHOICE_TIPS=%CHOICE_TIPS%(支持鼠标点击)
 
 :setDataSource
 echo ==========数据库配置:%dataSource%==========
@@ -80,6 +92,9 @@ echo ==========数据库配置:%dataSource%==========
 set /a dataSourceLen=0
 for /l %%i in (0,1,100) do if "x!dataSource:~%%i,1!" == "x" set /a dataSourceLen=%%i && goto endfor2
 :endfor2
+
+::重置配置项
+for %%a in ( dbName exportType fieldSeperator recordSeperator dbCharset dbUser dbPassword dbEncPassword dbHostIp dbHostPort dbService ) do set %%a=
 
 findstr "^%dataSource%" %DB_SETTING%>%DB_SETTING_TMP%
 
@@ -92,16 +107,23 @@ for /l %%i in (0,1,%fillStrLen%) do set fillStr=!fillStr!=
 echo %fillStr%
 
 ::检查配置项是否完整
-for %%a in ( dbName exportType fieldSeperator recordSeperator dbCharset dbUser dbEncPasswd dbHostIp dbHostPort dbService ) do (
+for %%a in ( dbName exportType fieldSeperator recordSeperator dbCharset dbUser dbHostIp dbHostPort dbService ) do (
     if not defined %%a echo %%a未配置，请检查！ && set checkEnvFlag=fail
 )
+if not defined dbPassword if not defined dbEncPassword echo 数据库密码未设置! && set checkEnvFlag=fail
 if defined checkEnvFlag goto configError
 
 ::设置数据库连接串
-for /f %%i in ( '%BIN_DIR%\szboc_decrypt "%dbEncPasswd%"' ) do (
-    if "x%%i" == "x#ERROR:" echo 数据库密码无法解析 && goto configError
-    set dbEnv=%dbUser%/%%i@%dbHostIp%:%dbHostPort%/%dbService%
+set passwordStr=
+if defined dbEncPassword (
+    for /f %%i in ( '%BIN_DIR%\szboc_decrypt "%dbEncPassword%"' ) do (
+        if "x%%i" == "x#ERROR:" echo 数据库密码无法解析 && goto configError
+        set passwordStr=%%i
+    )
+) else (
+    set passwordStr=%dbPassword%
 )
+set dbEnv=%dbUser%/%passwordStr%@%dbHostIp%:%dbHostPort%/%dbService%
 
 ::测试数据库连接
 echo 正在测试数据库连接...
@@ -117,28 +139,29 @@ echo   (3) 切换数据库
 echo   (4) 清理目录
 echo   (5) 退出程序
 echo ------------------------
-%ONLY_X64% choice /c:12345 /n /m "%CHOICE_TIPS%"
-%ONLY_X86% choix /c:12345 /n /m( "%CHOICE_TIPS%"
+%ONLY_KEYBOARD% choice /c:12345 /n /m "%CHOICE_TIPS%"
+%SUPPORT_MOUSE% choix /c:12345 /n /m( "%CHOICE_TIPS%"
 
 set item=%errorlevel%
-%ONLY_X86% echo 您选择了%item%
+if %item% equ 5 exit
+%SUPPORT_MOUSE% echo 您选择了%item%
 if %item% equ 1 goto importData
 if %item% equ 2 goto exportData
 if %item% equ 3 goto changeDB
 if %item% equ 4 goto cleanDir
-if %item% equ 5 exit
 goto end
 
 :importData
 set /a fileCount=0
-for %%a in ( data\*.* ) do (
+for %%a in ( %DATA_DIR%\*.csv %DATA_DIR%\*.txt ) do (
     set fileName=%%~na
     set fileExtName=%%~xa
     set "ctlFile=%CTL_DIR%\!fileName!.ctl"
     set /a fileCount=!fileCount!+1
     if /i "x!fileExtName!" equ "x.csv" (    
         if not exist !ctlFile! (
-            echo 正在生成控制文件:   !ctlFile!...
+            echo !fileCount!.数据文件：%%a
+            echo   正在生成控制文件: !ctlFile!...
             echo Load Data>!ctlFile!
             echo Append>>!ctlFile!
             echo into table %%~na>>!ctlFile!
@@ -149,14 +172,16 @@ for %%a in ( data\*.* ) do (
             head -n 1 %%a>>!ctlFile!
             echo ^)>>!ctlFile!
         ) else (
-            echo 已经存在的控制文件: !ctlFile!
+            echo !fileCount!.数据文件：%%a
+            echo   已经存在的控制文件: !ctlFile!
         )
     ) else (
         if not exist !ctlFile! (
             echo 数据文件 %%a 缺少对应的控制文件，将被忽略.
             set /a fileCount=!fileCount!-1
         ) else (
-            echo 已经存在的控制文件: !ctlFile!
+            echo !fileCount!.数据文件：%%a
+            echo   已经存在的控制文件: !ctlFile!
         )
     )
 )
@@ -165,11 +190,10 @@ if %fileCount% equ 0 echo 没有要导入的数据文件 && goto continue
 echo 要将这%fileCount%个文件导入【%dbName%】吗?
 echo; * Y-确定
 echo; * N-取消
-::choix /c:yn /m* /n
-%ONLY_X64% choice /c:YN /n /m
-%ONLY_X86% choix /c:YN /n /m*
+%ONLY_KEYBOARD% choice /c:YN /n
+%SUPPORT_MOUSE% choix /c:YN /n /m*
 if errorlevel 2 echo 您选择了N && goto showMenu
-%ONLY_X86% echo 您选择了Y
+echo 您选择了Y
 echo.
 echo 导入数据开始...
 for %%a in ( %DATA_DIR%\*.csv ) do (
@@ -179,10 +203,10 @@ for %%a in ( %DATA_DIR%\*.csv ) do (
     findstr /r "加载成功 没有加载" %LOG_DIR%\!fileName!.log
     echo.
 )
-for %%a in ( %DATA_DIR%\*.* ) do (
+for %%a in ( %DATA_DIR%\*.txt ) do (
     set fileName=%%~na
     set fileExtName=%%~xa
-    if /i "x!fileExtName!" neq "x.csv" if exist %CTL_DIR%\!fileName!.ctl (
+    if exist %CTL_DIR%\!fileName!.ctl (
         echo 正在导入!fileName!...
         sqlldr %dbEnv% control=%CTL_DIR%\!fileName!.ctl data=%DATA_DIR%\!fileName!!fileExtName! bad=%DATA_DIR%\!fileName!.bad log=%LOG_DIR%\!fileName!.log skip=0 rows=20000 silent=HEADER direct=TRUE
         findstr /r "加载成功 没有加载" %LOG_DIR%\!fileName!.log
@@ -228,12 +252,10 @@ for /f "delims== tokens=2"  %%a in ( %DB_SETTING_TMP% ) do (
 )
 :endfor4
 echo ------------------------
-::echo 请选择
-::choix /c:123456789 /m( /n 
-%ONLY_X64% choice /c:123456789 /n /m "请选择"
-%ONLY_X86% choix /c:123456789 /n /m( "请选择"
+%ONLY_KEYBOARD% choice /c:123456789 /n /m "请选择"
+%SUPPORT_MOUSE% choix /c:123456789 /n /m( "请选择"
 set item=%errorlevel%
-%ONLY_X86% echo 您选择了%item%
+%SUPPORT_MOUSE% echo 您选择了%item%
 if %item% gtr %seqNo% echo 无效的选项,请重新输入 && goto changeDB
 for /f "delims=@ tokens=1 skip=%item%" %%a in ( %DB_SETTING_TMP% ) do (
     set dataSource=%%a
@@ -253,12 +275,10 @@ echo   (5) 除SQL外的全部目录
 echo   (6) 全部目录
 echo   (7) 取消清理
 echo ------------------------
-::echo 请选择
-::choix /c:1234567 /m( /n 
-%ONLY_X64% choice /c:1234567 /n /m "请选择"
-%ONLY_X86% choix /c:1234567 /n /m( "请选择"
+%ONLY_KEYBOARD% choice /c:1234567 /n /m "请选择"
+%SUPPORT_MOUSE% choix /c:1234567 /n /m( "请选择"
 set item=%errorlevel%
-%ONLY_X86% echo 您选择了%item%
+%SUPPORT_MOUSE% echo 您选择了%item%
 if %item% equ 1 call :cleanDir %DATA_DIR%\*.*
 if %item% equ 2 call :cleanDir %CTL_DIR%\*.ctl
 if %item% equ 3 call :cleanDir %LOG_DIR%\*.log
@@ -274,17 +294,18 @@ if "x%1" neq "x" (
 )
 goto :EOF
 
+
 :continue
-%ONLY_X86% choix /c /n /m "点击鼠标或按任意键返回主菜单..."
-%ONLY_X64% echo 按任意键返回主菜单...
-%ONLY_X64% pause>nul
+%SUPPORT_MOUSE% choix /c /n /m "点击鼠标或按任意键返回主菜单..."
+%ONLY_KEYBOARD% echo 按任意键返回主菜单...
+%ONLY_KEYBOARD% pause>nul
 cls
 goto showMenu
 
 :end
-%ONLY_X64% echo 按任意键退出...
-%ONLY_X64% pause>nul
-%ONLY_X86% choix /c /n /t 2 /m "即将关闭程序..."
+%ONLY_KEYBOARD% echo 按任意键退出...
+%ONLY_KEYBOARD% pause>nul
+%SUPPORT_MOUSE% choix /c /n /m "点击鼠标或按任意键退出..."
 exit
 
 :configError
