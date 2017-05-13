@@ -1,6 +1,16 @@
 ::脚本功能：Oracle快速数据导入与导出
 ::脚本编写：四方精创 欧林海
 ::版本历史：
+::          2018-04-24 Ver1.9
+::                       为生产环境的表数据导入添加额外的确认操作
+::          2017-09-16 Ver1.8
+::                       将数据库配置文件名修改为INI格式
+::                       解决了CSV文件中的列名总长度超过1024字节时生成的CTL文件列丢失的问题
+::                       新增导入配置项importMode，用于指定执行sqlldr时使用的装载方式
+::                       增加配置选项的默认值设置，包含exportType、importMode、fieldSeperator、recordSeperator、dbCharset、dbHostPort
+::          2017-09-12 Ver1.7
+::                       将加解密的程序版本更新到2.2
+::                       配置项的分隔符修改为"@@"，如果值域包含@@，请使用^@^@
 ::          2017-04-08 Ver1.6
 ::                       添加64位操作系统支持，添加是否启用鼠标操作的配置（仅32位系统有效）
 ::                       将导入数据文件的格式限定为csv，txt
@@ -9,9 +19,9 @@
 ::                       添加了数据库密码明文配置项dbPassword（原来仅支持密文配置项dbEncPassword）
 ::          2016-12-26 Ver1.4
 ::                       添加直接按照数据库表清单导出数据功能
-::                       添加数据库端口配置项
-::                       添加导出数据字段分隔符设置
-::                       添加导出数据记录分隔符设置
+::                       添加数据库端口配置项dbHostPort
+::                       添加导出数据字段分隔符设置fieldSeperator
+::                       添加导出数据记录分隔符设置recordSeperator
 ::          2016-12-24 Ver1.3
 ::                       合并导入与导出功能，并添加菜单操作（支持鼠标点击）
 ::                       添加临时切换数据库功能
@@ -36,7 +46,7 @@ if /i "%PROCESSOR_IDENTIFIER:~0,3%"=="x86" (
     set "ONLY_X86=REM"
 )
 
-title Oracle快速导数工具 Ver1.6(%WIN_BIT%) —by 欧林海
+title Oracle快速导数工具 Ver1.9(%WIN_BIT%) —by 欧林海
 
 ::切换字符编码
 %ONLY_X64% chcp 936>nul
@@ -52,7 +62,7 @@ set SQL_DIR=sql
 set CTL_DIR=ctl
 set DATA_DIR=data
 set LOG_DIR=log
-set DB_SETTING=数据库设置.txt
+set DB_SETTING=数据库设置.ini
 set DB_SETTING_TMP=%BIN_DIR%\dataSource.cfg
 set DB_TEST_SQL=%BIN_DIR%\test_conn.sql
 set DB_TEST_RES=%LOG_DIR%\test_conn_res.log
@@ -61,11 +71,6 @@ set path=%path%;%CUR_DIR%\%BIN_DIR%
 set TAB_LIST=%SQL_DIR%\table_list.txt
 set CHOICE_TIPS=请选择菜单
 
-::执行环境检查
-::检查Oracle命令行工具是否可用
-for %%a in ( sqlplus.exe sqlldr.exe ) do (
-    where %%a 1>nul 2>nul || ( echo Oracle命令行 %%a 未找到，请确认本机是否安装了带命令行工具的Oracle. && goto end )
-)
 ::检查BIN目录中的可执行文件是否缺失
 for %%a in ( sqluldr2.exe szboc_decrypt.exe head.exe choix.com ) do (
     if not exist %BIN_DIR%\%%a echo 缺少程序必需的文件: %BIN_DIR%\%%a && goto end
@@ -94,12 +99,12 @@ for /l %%i in (0,1,100) do if "x!dataSource:~%%i,1!" == "x" set /a dataSourceLen
 :endfor2
 
 ::重置配置项
-for %%a in ( dbName exportType fieldSeperator recordSeperator dbCharset dbUser dbPassword dbEncPassword dbHostIp dbHostPort dbService ) do set %%a=
+for %%a in ( dbName exportType importMode fieldSeperator recordSeperator dbCharset dbUser dbPassword dbEncPassword dbHostIp dbHostPort dbService ) do set %%a=
 
 findstr "^%dataSource%" %DB_SETTING%>%DB_SETTING_TMP%
 
 ::读取配置项
-for /f "delims=@ tokens=2"  %%a in ( %DB_SETTING_TMP% ) do set "%%a" && echo %%a
+for /f "delims=@@ tokens=2"  %%a in ( %DB_SETTING_TMP% ) do set "%%a" && echo %%a
 
 set /a fillStrLen=%dataSourceLen%+30
 set fillStr=
@@ -107,11 +112,19 @@ for /l %%i in (0,1,%fillStrLen%) do set fillStr=!fillStr!=
 echo %fillStr%
 
 ::检查配置项是否完整
-for %%a in ( dbName exportType fieldSeperator recordSeperator dbCharset dbUser dbHostIp dbHostPort dbService ) do (
+for %%a in ( dbName dbUser dbHostIp dbService ) do (
     if not defined %%a echo %%a未配置，请检查！ && set checkEnvFlag=fail
 )
 if not defined dbPassword if not defined dbEncPassword echo 数据库密码未设置! && set checkEnvFlag=fail
 if defined checkEnvFlag goto configError
+
+::设置配置项默认值
+if not defined exportType set exportType=csv
+if not defined importMode set importMode=Append
+if not defined fieldSeperator set fieldSeperator=,
+if not defined recordSeperator set recordSeperator=0x0a
+if not defined dbCharset set dbCharset=gbk
+if not defined dbHostPort set dbHostPort=1521
 
 ::设置数据库连接串
 set passwordStr=
@@ -126,7 +139,7 @@ if defined dbEncPassword (
 set dbEnv=%dbUser%/%passwordStr%@%dbHostIp%:%dbHostPort%/%dbService%
 
 ::测试数据库连接
-echo 正在测试数据库连接...
+echo 数据库连接验证中...
 if exist %DB_TEST_RES% del %DB_TEST_RES%
 sqlplus -L -S %dbEnv% @%DB_TEST_SQL% %DB_TEST_RES%>%DB_TEST_INFO%
 findstr "success" %DB_TEST_RES% 1>nul 2>nul && echo 数据库连接成功 || goto connDatabaseError
@@ -152,6 +165,12 @@ if %item% equ 4 goto cleanDir
 goto end
 
 :importData
+::执行环境检查
+::检查Oracle命令行工具是否可用
+for %%a in ( sqlplus.exe sqlldr.exe ) do (
+    where %%a 1>nul 2>nul || ( echo Oracle命令行 %%a 未找到，请确认本机是否安装了带命令行工具的Oracle. && goto end )
+)
+
 set /a fileCount=0
 for %%a in ( %DATA_DIR%\*.csv %DATA_DIR%\*.txt ) do (
     set fileName=%%~na
@@ -163,9 +182,9 @@ for %%a in ( %DATA_DIR%\*.csv %DATA_DIR%\*.txt ) do (
             echo !fileCount!.数据文件：%%a
             echo   正在生成控制文件: !ctlFile!...
             echo Load Data>!ctlFile!
-            echo Append>>!ctlFile!
-            echo into table %%~na>>!ctlFile!
-            echo fields terminated  by ^',^'>>!ctlFile!
+            echo %importMode%>>!ctlFile!
+            echo Into Table %%~na>>!ctlFile!
+            echo Fields Terminated  by ^',^'>>!ctlFile!
             echo OPTIONALLY ENCLOSED BY ^'^"^'>>!ctlFile!
             echo TRAILING NULLCOLS>>!ctlFile!
             echo ^(>>!ctlFile!
@@ -194,6 +213,15 @@ echo; * N-取消
 %SUPPORT_MOUSE% choix /c:YN /n /m*
 if errorlevel 2 echo 您选择了N && goto showMenu
 echo 您选择了Y
+::确认是否为生产环境
+set confirmStr=
+set localIp=
+for /f "tokens=4" %%a in ('route print^|findstr 0.0.0.0.*0.0.0.0') do set localIp=%%a
+if "x%localIp:~0,6%" == "x10.100" (
+    set /p confirmStr=当前为生产环境，请输入YES确认入库:
+    if not "x!confirmStr!" == "xYES" echo 您取消了本次操作 && goto continue
+)
+
 echo.
 echo 导入数据开始...
 for %%a in ( %DATA_DIR%\*.csv ) do (
@@ -239,7 +267,7 @@ goto continue
 
 :changeDB
 echo 数据库列表>%DB_SETTING_TMP%
-findstr "@dbName" %DB_SETTING%>>%DB_SETTING_TMP%
+findstr "@@dbName" %DB_SETTING%>>%DB_SETTING_TMP%
 set /a seqNo=0
 set seqNoText=
 echo.
@@ -257,7 +285,7 @@ echo ------------------------
 set item=%errorlevel%
 %SUPPORT_MOUSE% echo 您选择了%item%
 if %item% gtr %seqNo% echo 无效的选项,请重新输入 && goto changeDB
-for /f "delims=@ tokens=1 skip=%item%" %%a in ( %DB_SETTING_TMP% ) do (
+for /f "delims=@@ tokens=1 skip=%item%" %%a in ( %DB_SETTING_TMP% ) do (
     set dataSource=%%a
     goto endfor3
 )
@@ -302,12 +330,6 @@ goto :EOF
 cls
 goto showMenu
 
-:end
-%ONLY_KEYBOARD% echo 按任意键退出...
-%ONLY_KEYBOARD% pause>nul
-%SUPPORT_MOUSE% choix /c /n /m "点击鼠标或按任意键退出..."
-exit
-
 :configError
 echo 请检查数据库参数配置或切换数据库！
 goto changeDB
@@ -316,3 +338,9 @@ goto changeDB
 head -n 2 %DB_TEST_INFO%
 echo 连接数据库失败，请检查配置或切换数据库！
 goto changeDB
+
+:end
+%ONLY_KEYBOARD% echo 按任意键退出...
+%ONLY_KEYBOARD% pause>nul
+%SUPPORT_MOUSE% choix /c /n /m "点击鼠标或按任意键退出..."
+exit
