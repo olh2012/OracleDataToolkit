@@ -1,6 +1,8 @@
 ::脚本功能：Oracle快速数据导入与导出
 ::脚本编写：四方精创 欧林海
 ::版本历史：
+::          2018-05-11 Ver2.0
+::                       将加解密方案切换为BASE64
 ::          2018-04-24 Ver1.9
 ::                       为生产环境的表数据导入添加额外的确认操作
 ::          2017-09-16 Ver1.8
@@ -31,8 +33,6 @@
 ::          2016-12-02 Ver1.1 
 ::                       添加数据库配置及导出格式、数据库字符集的配置
 ::                       添加数据库连接测试
-::          2016-11-03 Ver1.0
-::                       初始版本，能实现批量数据导出功能
 @echo off
 ::开启变量延迟
 setlocal EnableDelayedExpansion
@@ -46,7 +46,7 @@ if /i "%PROCESSOR_IDENTIFIER:~0,3%"=="x86" (
     set "ONLY_X86=REM"
 )
 
-title Oracle快速导数工具 Ver1.9(%WIN_BIT%) —by 欧林海
+title Oracle快速导数工具 Ver2.0(%WIN_BIT%) —by 欧林海
 
 ::切换字符编码
 %ONLY_X64% chcp 936>nul
@@ -64,6 +64,7 @@ set DATA_DIR=data
 set LOG_DIR=log
 set DB_SETTING=数据库设置.ini
 set DB_SETTING_TMP=%BIN_DIR%\dataSource.cfg
+set DB_PWD_TMP=%BIN_DIR%\dbPwd
 set DB_TEST_SQL=%BIN_DIR%\test_conn.sql
 set DB_TEST_RES=%LOG_DIR%\test_conn_res.log
 set DB_TEST_INFO=%LOG_DIR%\test_conn_info.log
@@ -71,8 +72,14 @@ set path=%path%;%CUR_DIR%\%BIN_DIR%
 set TAB_LIST=%SQL_DIR%\table_list.txt
 set CHOICE_TIPS=请选择菜单
 
+::执行环境检查
+::检查Oracle命令行工具是否可用
+for %%a in ( sqlplus.exe sqlldr.exe ) do (
+    where %%a 1>nul 2>nul || ( echo Oracle命令行 %%a 未找到，请确认本机是否安装了带命令行工具的Oracle. && goto end )
+)
+
 ::检查BIN目录中的可执行文件是否缺失
-for %%a in ( sqluldr2.exe szboc_decrypt.exe head.exe choix.com ) do (
+for %%a in ( sqluldr2.exe head.exe choix.com ) do (
     if not exist %BIN_DIR%\%%a echo 缺少程序必需的文件: %BIN_DIR%\%%a && goto end
 )
 
@@ -129,10 +136,14 @@ if not defined dbHostPort set dbHostPort=1521
 ::设置数据库连接串
 set passwordStr=
 if defined dbEncPassword (
-    for /f %%i in ( '%BIN_DIR%\szboc_decrypt "%dbEncPassword%"' ) do (
-        if "x%%i" == "x#ERROR:" echo 数据库密码无法解析 && goto configError
+    echo %dbEncPassword%>%DB_PWD_TMP%.tmp
+    if exist %DB_PWD_TMP%.out del %DB_PWD_TMP%.out
+    certutil -decode %DB_PWD_TMP%.tmp %DB_PWD_TMP%.out>nul
+    for /f %%i in ( %DB_PWD_TMP%.out ) do (
+        if "x%%i" == "x" echo 数据库密码无法解析 && goto configError
         set passwordStr=%%i
     )
+    if exist %DB_PWD_TMP%.* del %DB_PWD_TMP%.*
 ) else (
     set passwordStr=%dbPassword%
 )
@@ -165,12 +176,6 @@ if %item% equ 4 goto cleanDir
 goto end
 
 :importData
-::执行环境检查
-::检查Oracle命令行工具是否可用
-for %%a in ( sqlplus.exe sqlldr.exe ) do (
-    where %%a 1>nul 2>nul || ( echo Oracle命令行 %%a 未找到，请确认本机是否安装了带命令行工具的Oracle. && goto end )
-)
-
 set /a fileCount=0
 for %%a in ( %DATA_DIR%\*.csv %DATA_DIR%\*.txt ) do (
     set fileName=%%~na
