@@ -42,5 +42,5 @@ dbms_stats.gather_table_stats(ownname => '模式名',tabname => '表名', cascade => 
 certutil -encode password.txt password.out
 其中password.txt文件存储了密码明文，password.out是一个用于存储密文的文件，如果原来这个文件存在请先删除。
 
-欧林海
+frank
 建议或Bug反馈： franka907@126.com
