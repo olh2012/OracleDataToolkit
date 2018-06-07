@@ -68,7 +68,7 @@ set DB_PWD_TMP=%BIN_DIR%\dbPwd
 set DB_TEST_SQL=%BIN_DIR%\test_conn.sql
 set DB_TEST_RES=%LOG_DIR%\test_conn_res.log
 set DB_TEST_INFO=%LOG_DIR%\test_conn_info.log
-set path=%path%;%CUR_DIR%\%BIN_DIR%
+set PATH=%PATH%;%CUR_DIR%\%BIN_DIR%
 set TAB_LIST=%SQL_DIR%\table_list.txt
 set CHOICE_TIPS=«Î—°‘Ò≤Àµ•
 
