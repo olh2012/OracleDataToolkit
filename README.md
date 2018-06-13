@@ -55,8 +55,8 @@ dbms_stats.gather_table_stats(ownname => '模式名',tabname => '表名', cascade => 
 
 1. 程序下载后，如果发现文件换行符是LF，需要转换为CRLF（主要是 `快速导数.bat`、`数据库设置.ini`、`sql\table_list.txt`文件）；
 2. 程序界面中的各个菜单选择或选项确定可以使用鼠标左键点击（仅32位系统），也可以使用提示的键盘按键；
-3. 数据库密码配置项为dbPassword(明文），但强烈建议用加密的密码配置项dbEncPassword（加密方式：BASE64）；
-4. 如果电脑中没有其他可进行BASE64加密的工具，可以使用系统自带的命令行实现：
+3. 数据库密码配置项为dbPassword(明文），但强烈建议用加密的密码配置项dbEncPassword（加密方式：Base64）；
+4. 如果电脑中没有其他可进行Base64加密的工具，可以使用系统自带的命令行实现：
 
 ```batch
 certutil -encode password.txt password.out
